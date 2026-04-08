@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "argus-scanner"
+version = "1.0.0"
+description = "AI-powered open source vulnerability scanner using Claude"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Argus Contributors"}]
+keywords = ["security", "vulnerability", "scanner", "sast", "ai", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "black", "ruff", "mypy"]
+
+[project.scripts]
+argus = "argus.scanner:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/argus"
+Issues = "https://github.com/yourusername/argus/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
