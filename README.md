@@ -1,28 +1,22 @@
-# 🔍 Argus
+# 🔍 Argus v2
 
 **AI-powered open source vulnerability scanner. Built for defenders.**
+**Nefarious actors, look away. 👁**
 
 [![PyPI](https://img.shields.io/pypi/v/argus-scanner)](https://pypi.org/project/argus-scanner/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 
-Argus combines **fast regex pattern matching** with **Claude's semantic reasoning** to find vulnerabilities that automated tools miss — logic flaws, auth bypasses, subtle injection vectors, and cryptographic weaknesses.
+Argus v2 combines **four detection layers** to find what everything else misses:
 
-No cloud upload of your code. No SaaS. Just a CLI you run yourself.
+| Layer | Method | Cost |
+|---|---|---|
+| 1 | 60+ regex patterns across 18 vuln categories | Free |
+| 2 | Shannon entropy scan — finds embedded secrets even without keyword context | Free |
+| 3 | Claude semantic analysis — taint tracing, logic flaws, auth bypasses | API key |
+| 4 | Dependency audit via OSV.dev — CVEs in your packages | Free |
 
----
-
-## Why Argus?
-
-Most SAST tools match patterns. They find the obvious stuff. What they miss:
-
-- Business logic flaws requiring cross-file reasoning
-- Auth bypasses that depend on execution context
-- Subtle type confusion vulnerabilities
-- Cryptographic misuse that isn't syntactically wrong
-- Race conditions and TOCTOU issues
-
-Argus uses Claude to *read* your code the way a security researcher does — understanding what it does, not just what it looks like.
+No cloud upload of your code. No SaaS. No vendor lock-in. Just a CLI you run yourself.
 
 ---
 
@@ -30,22 +24,30 @@ Argus uses Claude to *read* your code the way a security researcher does — und
 
 ```bash
 pip install argus-scanner
+
+# Full install (watch mode + YAML config)
+pip install "argus-scanner[full]"
 ```
 
-Set your API key:
+Set your API key (optional — pattern + entropy mode works without it):
 ```bash
-export ANTHROPIC_API_KEY=your_key_here
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ---
 
-## Usage
+## Commands
+
+### `argus scan` — Scan a directory or file
 
 ```bash
-# Scan a directory (AI + pattern mode)
+# Full scan (AI + patterns + entropy + dep audit)
 argus scan ./myproject
 
-# Pattern-only mode (no API key needed, fast)
+# Generate AI fix patches for CRITICAL/HIGH findings
+argus scan ./myproject --fix
+
+# Pattern + entropy only (no API key needed, instant)
 argus scan ./myproject --no-ai
 
 # Save reports
@@ -54,90 +56,155 @@ argus scan ./myproject -o report.json --sarif results.sarif
 # Only show HIGH and above
 argus scan ./myproject --severity HIGH
 
-# Verbose output with code snippets and fix recommendations
+# Verbose: descriptions, code snippets, fix recommendations
 argus scan ./myproject --verbose
 
-# High concurrency for large repos
-argus scan ./myproject --concurrency 10
+# Baseline comparison (CI regression detection)
+argus scan ./myproject --baseline report-v1.json -o report-v2.json
 ```
+
+### `argus audit` — Interactive triage
+
+```bash
+argus audit report.json
+```
+
+Arrow-key through findings. Per-finding actions:
+
+| Key | Action |
+|---|---|
+| `↑↓` | Navigate |
+| `a` | Accept (mark as confirmed vulnerability) |
+| `d` | Dismiss (suppress — adds to `.argus-ignore`) |
+| `s` | Snooze (skip for this session) |
+| `p` | View AI-generated patch diff |
+| `e` | Export as GitHub Issue body |
+| `q` | Save & quit |
+
+### `argus watch` — Live guard mode
+
+```bash
+argus watch ./src
+```
+
+Watches for file saves, rescans instantly. Catches vulnerabilities before you even commit.
+Requires: `pip install "argus-scanner[watch]"`
+
+### `argus init` — Project setup
+
+```bash
+argus init
+```
+
+Creates `.argus.yml` and `.argus-ignore` in the current directory.
 
 ---
 
 ## Output
 
 ```
-  ▄████████████████████████████████▄
-  █  ARGUS — Defensive AI Code Audit █
-  ▀████████████████████████████████▀
+  ▄████████████████████████████████████▄
+  █  ARGUS v2  —  Defensive AI Scanner  █
+  █    👁  Watching. Always watching.    █
+  ▀████████████████████████████████████▀
 
-────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────
   ARGUS SCAN COMPLETE
-────────────────────────────────────────────────────────────
-  Target:   /home/user/myproject
-  Scan ID:  a3f9c12b8e4d
-  Files:    847  |  Lines: 142,391
-  Duration: 23.4s
-  Mode:     AI + Pattern
-────────────────────────────────────────────────────────────
-  CRITICAL   ██ 2
-  HIGH       ████████ 8
-  MEDIUM     ███████████████ 15
-  LOW        ████ 4
+──────────────────────────────────────────────────────────────
+  Target:    /home/user/myproject
+  Scan ID:   a3f9c12b8e4d
+  Files:     847  |  Lines: 142,391
+  Duration:  23.4s
+  Mode:      AI + Pattern + Entropy
+──────────────────────────────────────────────────────────────
+  CRITICAL   ████ 2
+  HIGH       ████████████████ 8
+  MEDIUM     ██████████████████████████████ 15
+  LOW        ████████ 4
 
   Total findings: 29
+  Dep advisories: 6  3 CRITICAL  2 HIGH
+──────────────────────────────────────────────────────────────
 ```
 
-Each finding includes:
-- **Severity** (CRITICAL / HIGH / MEDIUM / LOW)
-- **CWE identifier**
-- **Exact file and line number**
-- **Code snippet**
-- **Specific, actionable fix recommendation**
-- **Confidence level** and detection method (AI vs pattern)
+Each finding includes: severity, CWE, file + line, code snippet, actionable fix recommendation, confidence, detection method, and a stable **fingerprint** for baseline tracking.
 
 ---
 
-## GitHub Actions Integration
-
-Drop this in `.github/workflows/argus.yml` and findings appear natively in the **Security** tab:
+## Configuration (`.argus.yml`)
 
 ```yaml
-- name: Run Argus
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: argus scan . --sarif results.sarif
+# Which severity levels fail CI
+fail_on:
+  - CRITICAL
+  - HIGH
 
-- name: Upload to GitHub Security
-  uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: results.sarif
+# Paths to skip
+ignore_paths:
+  - tests/
+  - fixtures/
+  - vendor/
+
+# Dependency audit via OSV.dev (free, no key needed)
+dep_audit: true
+
+# Auto-generate AI fix patches for CRITICAL/HIGH
+fix_mode: false
+
+# Concurrency
+concurrency: 5
 ```
 
-See [`.github/workflows/argus-scan.yml`](.github/workflows/argus-scan.yml) for the full workflow with PR comments.
+## Suppression (`.argus-ignore`)
+
+Use `argus audit` to interactively dismiss findings. Dismissed findings are added to `.argus-ignore` by fingerprint — they won't resurface in future scans or CI runs.
+
+```
+# .argus-ignore — one fingerprint per line
+a1b2c3d4e5f6g7h8
+```
 
 ---
 
-## What Argus Finds
+## What Argus v2 Finds
+
+### Code Vulnerabilities (Pattern + AI)
 
 | Category | CWE | Detection |
-|----------|-----|-----------|
+|---|---|---|
 | SQL Injection | CWE-89 | Pattern + AI |
 | Command Injection | CWE-78 | Pattern + AI |
 | Path Traversal | CWE-22 | Pattern + AI |
-| Hardcoded Secrets | CWE-798 | Pattern + AI |
+| Hardcoded Secrets | CWE-798 | Pattern + Entropy + AI |
+| High-Entropy Strings | CWE-798 | Entropy |
 | Insecure Deserialization | CWE-502 | Pattern + AI |
-| SSRF / XXE | CWE-611 | Pattern + AI |
-| Auth/Authz Bypasses | CWE-285 | AI |
-| Cryptographic Weaknesses | CWE-327 | AI |
+| SSRF / XXE | CWE-918 | Pattern + AI |
+| XSS | CWE-79 | Pattern + AI |
+| Open Redirect | CWE-601 | Pattern + AI |
+| Auth/JWT Bypasses | CWE-287 | Pattern + AI |
+| Weak Cryptography | CWE-327 | Pattern + AI |
+| IDOR / Mass Assignment | CWE-639 | Pattern + AI |
+| Prototype Pollution | CWE-1321 | Pattern + AI |
+| Debug Mode Enabled | CWE-489 | Pattern |
+| Weak Password Hashing | CWE-916 | Pattern + AI |
+| Insecure File Upload | CWE-434 | Pattern + AI |
+| GraphQL Misconfig | CWE-200 | Pattern |
+| IaC Misconfigurations | CWE-732 | Pattern |
 | Race Conditions | CWE-362 | AI |
 | Business Logic Flaws | — | AI |
 | Memory Safety (C/C++) | CWE-119 | AI |
+| Second-Order Injection | CWE-89 | AI |
+| JWT Algorithm Confusion | CWE-327 | Pattern + AI |
+| Dependency Confusion | CWE-1104 | Pattern |
 
----
+### Dependency Vulnerabilities (OSV.dev — free, no key)
 
-## Supported Languages
-
-Python · JavaScript · TypeScript · Go · Rust · C · C++ · Java · PHP · Ruby · Shell · YAML · Terraform
+- Python (`requirements.txt`, `pyproject.toml`, `Pipfile`)
+- JavaScript (`package.json`, `yarn.lock`)
+- Go (`go.mod`)
+- Ruby (`Gemfile.lock`)
+- Rust (`Cargo.toml`)
+- Java (`pom.xml`) *(via AI)*
 
 ---
 
@@ -146,31 +213,115 @@ Python · JavaScript · TypeScript · Go · Rust · C · C++ · Java · PHP · R
 ```
 argus scan ./target
      │
-     ├─ collect_files()          # Walk directory, respect excludes
+     ├─ collect_files()              # Walk, respect excludes + .argus.yml
      │
-     ├─ PatternScanner           # Fast regex, zero API cost
-     │   └─ QUICK_PATTERN_CHECKS # 18 patterns across 6 categories
+     ├─ PatternScanner               # 60+ regex patterns, 18 categories
+     │   └─ EntropyScanner           # Shannon entropy on all string literals
      │
-     ├─ AIAnalyzer (async)       # Claude semantic analysis
-     │   ├─ Chunked file reading  # Handles large files gracefully
-     │   ├─ Hint injection        # Pattern findings inform AI context
-     │   └─ Deduplication         # AI doesn't re-report pattern hits
+     ├─ AIAnalyzer (async)           # Claude semantic / taint analysis
+     │   ├─ Chunked file reading     # Handles large files gracefully
+     │   ├─ Hint injection           # Pattern hints inform AI context
+     │   ├─ Deduplication            # AI doesn't re-report pattern hits
+     │   └─ Fix generation           # Unified diff patches (--fix mode)
+     │
+     ├─ DependencyAuditor            # Parse manifests → OSV.dev batch API
+     │   ├─ requirements.txt / pyproject.toml
+     │   ├─ package.json
+     │   ├─ go.mod
+     │   ├─ Gemfile.lock
+     │   └─ Cargo.toml
      │
      └─ Reporter
-         ├─ Console summary + colored findings
-         ├─ JSON report
-         └─ SARIF (GitHub Code Scanning compatible)
+         ├─ Console (colored, severity bars)
+         ├─ JSON (fingerprinted, baseline-diffable)
+         ├─ SARIF (GitHub Code Scanning)
+         └─ .patch files (--fix mode)
 ```
-
-**Privacy**: Your code is sent to the Anthropic API for analysis. Review [Anthropic's privacy policy](https://anthropic.com/privacy) before scanning proprietary code. Use `--no-ai` for air-gapped or sensitive environments.
 
 ---
 
-## Responsible Disclosure
+## GitHub Actions Integration
 
-If Argus finds vulnerabilities in **other people's software**, please follow coordinated disclosure:
+```yaml
+# .github/workflows/argus.yml
+name: Argus Security Scan
 
-1. Contact the maintainer privately (security@ email, GitHub Security Advisories)
+on: [push, pull_request]
+
+jobs:
+  argus:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Argus
+        run: pip install argus-scanner
+
+      - name: Run Argus
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          argus scan . \
+            -o argus-report.json \
+            --sarif argus-results.sarif \
+            --severity LOW
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: argus-results.sarif
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-report
+          path: argus-report.json
+```
+
+### PR Regression Mode (only fail on NEW findings)
+
+```yaml
+      - name: Download baseline
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          name: argus-report
+          path: baseline/
+        continue-on-error: true
+
+      - name: Run Argus with baseline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          argus scan . \
+            --baseline baseline/argus-report.json \
+            -o argus-report.json \
+            --sarif argus-results.sarif
+```
+
+---
+
+## Supported Languages
+
+Python · JavaScript · TypeScript · Go · Rust · C · C++ · Java · Kotlin · Scala · PHP · Ruby · Shell · YAML · TOML · Terraform (HCL) · C# · Swift · Lua · SQL · HTML/Jinja · XML
+
+---
+
+## Responsible Use
+
+Argus is a **defensive** tool. If you find vulnerabilities in other projects:
+
+1. Contact the maintainer privately (security@ or GitHub Security Advisories)
 2. Give them reasonable time to patch (90 days is standard)
 3. Only publish after a fix is available
 
@@ -180,18 +331,18 @@ Do not use Argus to scan systems you don't own or have explicit permission to te
 
 ## Contributing
 
-PRs welcome. High-value contributions:
+High-value contributions:
 
-- New pattern checks (`argus/patterns/`)
-- Language-specific analyzers
-- Better deduplication logic
-- Benchmark suite against known-vulnerable repos (DVWA, WebGoat, etc.)
+- New pattern checks (`argus/patterns/scanner.py`)
+- Language-specific parser improvements
+- Benchmark suite against DVWA, WebGoat, Juice Shop
 - Integration tests
+- GitHub Issue / Jira export connectors in triage mode
 
 ```bash
-git clone https://github.com/yourusername/argus
-cd argus
-pip install -e ".[dev]"
+git clone https://github.com/stackbleed-ctrl/ARGUS
+cd ARGUS
+pip install -e ".[full]"
 pytest
 ```
 
@@ -199,8 +350,8 @@ pytest
 
 ## License
 
-MIT — use it, fork it, ship it. Attribution appreciated but not required.
+MIT — use it, fork it, ship it.
 
 ---
 
-*Built with Claude. Not affiliated with Anthropic.*
+*Built with Claude. Threat actors not welcome. 👁*

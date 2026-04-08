@@ -2,85 +2,182 @@ name: Argus Security Scan
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ main, master ]
-  schedule:
-    - cron: '0 2 * * 1'  # Weekly Monday 2am
+    branches: [main, master, develop]
 
 permissions:
+  security-events: write
   contents: read
-  security-events: write  # Required for SARIF upload
+  pull-requests: write
 
 jobs:
-  argus-scan:
-    name: Argus Vulnerability Scan
+  argus:
+    name: Argus v2 — Vulnerability Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: pip
 
       - name: Install Argus
-        run: pip install argus-scanner
+        run: pip install "argus-scanner[yaml]"
+
+      # Try to download baseline from last successful main branch scan
+      - name: Download baseline report
+        id: baseline
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          name: argus-baseline
+          path: .argus-baseline/
+          branch: ${{ github.event.repository.default_branch }}
+          workflow_conclusion: success
+        continue-on-error: true
 
       - name: Run Argus scan
+        id: scan
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          argus scan . \
-            --output argus-report.json \
-            --sarif argus-results.sarif \
-            --severity MEDIUM \
-            --concurrency 8
-        continue-on-error: true  # Don't fail build, let SARIF handle alerts
+          BASELINE_FLAG=""
+          if [ -f ".argus-baseline/argus-report.json" ]; then
+            echo "Baseline found — running in regression mode"
+            BASELINE_FLAG="--baseline .argus-baseline/argus-report.json"
+          else
+            echo "No baseline — running full scan"
+          fi
 
-      - name: Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+          argus scan . \
+            $BASELINE_FLAG \
+            -o argus-report.json \
+            --sarif argus-results.sarif \
+            --severity LOW \
+            --verbose \
+            2>&1 | tee argus-output.txt
+
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Security
         if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: argus-results.sarif
           category: argus
 
-      - name: Upload JSON report as artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload report artifact
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: argus-security-report
+          name: argus-report
           path: argus-report.json
           retention-days: 90
 
-      - name: Comment on PR with summary
-        if: github.event_name == 'pull_request'
+      # Save as baseline on main branch pushes
+      - name: Save as baseline
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/upload-artifact@v4
+        with:
+          name: argus-baseline
+          path: argus-report.json
+          retention-days: 365
+
+      # Post a PR comment with finding summary
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const report = JSON.parse(fs.readFileSync('argus-report.json', 'utf8'));
-            const s = report.summary;
-            const body = [
-              '## 🔍 Argus Security Scan Results',
-              '',
-              `| Severity | Count |`,
-              `|----------|-------|`,
-              `| 🔴 Critical | ${s.critical} |`,
-              `| 🟠 High | ${s.high} |`,
-              `| 🟡 Medium | ${s.medium} |`,
-              `| 🔵 Low | ${s.low} |`,
-              '',
-              `Scanned ${s.files_scanned} files (${s.lines_scanned.toLocaleString()} lines) in ${s.duration_seconds}s`,
-              '',
-              s.critical > 0 ? '⚠️ **Critical vulnerabilities found — review before merging.**' : '✅ No critical issues found.',
-            ].join('\n');
+            let report = {};
+            try {
+              report = JSON.parse(fs.readFileSync('argus-report.json', 'utf8'));
+            } catch (e) {
+              return;
+            }
 
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            const s = report.summary || {};
+            const diff = report.baseline_diff;
+            const deps = (report.dep_advisories || []);
+            const depCrits = deps.filter(d => d.severity === 'CRITICAL').length;
+            const depHigh  = deps.filter(d => d.severity === 'HIGH').length;
+
+            const sev = (n, label, emoji) => n > 0 ? `${emoji} **${n} ${label}**` : '';
+
+            let body = `## 🔍 Argus v2 Security Scan\n\n`;
+
+            if (diff) {
+              body += `### Baseline Comparison\n`;
+              body += `| | Count |\n|---|---|\n`;
+              body += `| 🆕 New findings (regressions) | **${diff.new_count}** |\n`;
+              body += `| ✅ Resolved | ${diff.resolved_count} |\n`;
+              body += `| ➡️ Unchanged | ${diff.unchanged_count} |\n\n`;
+              if (diff.new_critical > 0) {
+                body += `> ⛔ **${diff.new_critical} NEW CRITICAL finding(s) introduced in this PR**\n\n`;
+              }
+            } else {
+              body += `### Summary\n`;
+              body += `| Severity | Count |\n|---|---|\n`;
+              body += `| 🔴 CRITICAL | **${s.critical || 0}** |\n`;
+              body += `| 🟠 HIGH     | **${s.high || 0}** |\n`;
+              body += `| 🟡 MEDIUM   | ${s.medium || 0} |\n`;
+              body += `| 🔵 LOW      | ${s.low || 0} |\n\n`;
+            }
+
+            if (deps.length > 0) {
+              body += `### Dependency Advisories\n`;
+              body += `${deps.length} vulnerable package(s) found`;
+              if (depCrits) body += ` — ${depCrits} CRITICAL`;
+              if (depHigh)  body += ` — ${depHigh} HIGH`;
+              body += `\n\n`;
+            }
+
+            body += `📊 Full report in [Actions artifacts](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n`;
+            body += `\n---\n*[Argus v2](https://github.com/stackbleed-ctrl/ARGUS) — AI-powered vulnerability scanner*`;
+
+            // Update existing comment or create new one
+            const marker = '<!-- argus-scan-comment -->';
+            const fullBody = marker + '\n' + body;
+
+            const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body
+              issue_number: context.payload.pull_request.number,
             });
+
+            const existing = comments.data.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: fullBody,
+              });
+            }
+
+      # Fail the job based on exit code from argus scan
+      - name: Enforce security gate
+        run: |
+          EXIT="${{ steps.scan.outputs.exit_code }}"
+          if [ "$EXIT" = "2" ]; then
+            echo "❌ CRITICAL vulnerability found. Failing build."
+            exit 2
+          elif [ "$EXIT" = "1" ]; then
+            echo "⚠️  HIGH vulnerability found. Failing build."
+            exit 1
+          else
+            echo "✅ Security gate passed."
+          fi

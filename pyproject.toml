@@ -1,42 +1,43 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "argus-scanner"
-version = "1.0.0"
-description = "AI-powered open source vulnerability scanner using Claude"
+version = "2.0.0"
+description = "AI-powered open source vulnerability scanner. Built for defenders."
 readme = "README.md"
-license = {text = "MIT"}
-authors = [{name = "Argus Contributors"}]
-keywords = ["security", "vulnerability", "scanner", "sast", "ai", "claude"]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["security", "vulnerability", "sast", "scanner", "ai", "devsecops"]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Topic :: Security",
+    "Topic :: Software Development :: Testing",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
-requires-python = ">=3.11"
+
 dependencies = [
     "aiohttp>=3.9",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "black", "ruff", "mypy"]
+watch = ["watchdog>=4.0"]
+yaml  = ["PyYAML>=6.0"]
+full  = ["watchdog>=4.0", "PyYAML>=6.0"]
 
 [project.scripts]
-argus = "argus.scanner:main"
+argus = "argus.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/argus"
-Issues = "https://github.com/yourusername/argus/issues"
+Homepage   = "https://github.com/stackbleed-ctrl/ARGUS"
+Repository = "https://github.com/stackbleed-ctrl/ARGUS"
+Issues     = "https://github.com/stackbleed-ctrl/ARGUS/issues"
 
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.mypy]
-python_version = "3.11"
-strict = false
+[tool.hatch.build.targets.wheel]
+packages = ["argus"]
